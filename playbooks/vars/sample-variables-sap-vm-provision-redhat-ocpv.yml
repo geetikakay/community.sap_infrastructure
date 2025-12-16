@@ -8,14 +8,155 @@
 # KUBECONFIG or K8S_AUTH_KUBECONFIG
 # sap_vm_provision_kubevirt_vm_kubeconfig: /path/to/clusterconfigs/kubeconfig
 
-# Namespace where the VM should be created in
-sap_vm_provision_kubevirt_vm_target_namespace: sap
+# ====================================
+# Bastion/Jump Host Configuration
+# ====================================
+#
+# WORKFLOW DIAGRAMS:
+# ----------------------------------------
+#
+# sap_vm_provision_bastion_execution: false
+# ┌─────────────────────────────────────────────────────────────┐
+# │                                                             │
+# │  Ansible Control Node                                       │
+# │  (localhost/AAP)                                           │
+# │  execution_host = localhost                                 │
+# │         │                                                   │
+# │         │ Direct SSH Connection                            │
+# │         │ (no ProxyJump)                                    │
+# │         │                                                   │
+# │         ▼                                                   │
+# │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
+# │  │   Target VM1 │    │   Target VM2 │    │   Target VM3 │ │
+# │  │  (KubeVirt)  │    │  (KubeVirt)  │    │  (KubeVirt)  │ │
+# │  └──────────────┘    └──────────────┘    └──────────────┘ │
+# │                                                             │
+# │  Use case: On-premise, VPN, or direct network connectivity│
+# └─────────────────────────────────────────────────────────────┘
+#
+# sap_vm_provision_bastion_execution: true
+# ┌─────────────────────────────────────────────────────────────┐
+# │                                                             │
+# │  Ansible Control Node                                       │
+# │  (localhost/AAP)                                            │
+# │         │                                                   │
+# │         │ SSH Connection                                    │
+# │         │ (with ProxyJump)                                  │
+# │         │                                                   │
+# │         ▼                                                   │
+# │  ┌──────────────────┐                                      │
+# │  │  Bastion Host     │                                      │
+# │  │  (execution_host) │                                      │
+# │  │  bastion_public_ip│                                      │
+# │  └──────────────────┘                                      │
+# │         │                                                   │
+# │         │ Proxy Connection                                  │
+# │         │                                                   │
+# │         ▼                                                   │
+# │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
+# │  │   Target VM1 │    │   Target VM2 │    │   Target VM3 │ │
+# │  │  (KubeVirt)  │    │  (KubeVirt)  │    │  (KubeVirt)  │ │
+# │  └──────────────┘    └──────────────┘    └──────────────┘ │
+# │                                                             │
+# │  Use case: Cloud IaaS - VMs not directly accessible        │
+# └─────────────────────────────────────────────────────────────┘
+#
+# WORKFLOW: sap_vm_provision_bastion_execution: false
+# ----------------------------------------
+# When bastion_execution is false:
+# - Direct connection from Ansible control node (localhost/AAP) to target VMs
+# - sap_vm_provision_execution_host defaults to 'localhost'
+# - No SSH ProxyJump/ProxyCommand is used
+# - Tasks are delegated to localhost (e.g., cleanup tasks in playbook)
+# - SSH connections go directly to VMs using sap_vm_provision_ssh_common_args_base only
+# - Use case: On-premise, VPN, or direct network connectivity scenarios
+#
+# WORKFLOW: sap_vm_provision_bastion_execution: true
+# ----------------------------------------
+# When bastion_execution is true:
+# - SSH Proxy connection: Ansible control node -> Bastion host -> Target VMs
+# - sap_vm_provision_execution_host automatically set to sap_vm_provision_bastion_public_ip
+# - ProxyJump is added to SSH connections (see sap_vm_provision_ssh_common_args_kubevirt_default)
+# - Tasks are delegated to the bastion host (e.g., cleanup tasks run on bastion)
+# - Required variables to configure:
+#   * sap_vm_provision_bastion_user: SSH user for bastion host
+#   * sap_vm_provision_bastion_public_ip: IP/hostname of bastion host
+#   * sap_vm_provision_ssh_bastion_private_key_file_path: SSH private key for bastion (optional - SSH uses default key resolution)
+#   * sap_vm_provision_bastion_ssh_port: SSH port for bastion (default: 50222, if different from 22)
+# - Use case: Cloud IaaS scenarios where VMs are not directly accessible from control node
+#
+# ----------------------------------------
 
+# sap user for executor or bastion host
+sap_vm_provision_bastion_user: <define a username for the bastion host>
+# set bastion SSH Proxy connection from Ansible control node to target node/s
+sap_vm_provision_bastion_execution: false
+#ip/hostname of the bastion host
+sap_vm_provision_bastion_public_ip: <define the public IP or hostname of the bastion host>
+# SSH private key file path for bastion host access (optional when bastion_execution: true)
+# Note: ProxyJump uses SSH's default key resolution (~/.ssh/id_rsa, SSH agent, SSH config)
+# This variable is documented for reference but ProxyJump doesn't directly support -i option
+# To use a specific key, either:
+#   1. Add it to SSH agent: ssh-add /path/to/bastion_key
+#   2. Configure in ~/.ssh/config for the bastion host
+#   3. Use default key locations that SSH will automatically try
+sap_vm_provision_ssh_bastion_private_key_file_path: <path to SSH private key for bastion host (optional)>
+# hostname/IP of the execution host where ansible tasks will be delegated to
+# When using bastion (sap_vm_provision_bastion_execution: true), this defaults to sap_vm_provision_bastion_public_ip
+# On AAP (Ansible Automation Platform) without bastion, this is typically localhost
+# This relationship is based on how kubevirt_vm execution uses these variables - execution_host is used for delegate_to
+# (e.g., in sample-sap-vm-provision-redhat-ocpv.yml line 75) and should be the bastion host when bastion execution is enabled
+sap_vm_provision_execution_host: "{{ sap_vm_provision_bastion_public_ip if (sap_vm_provision_bastion_execution | default(false) | bool) else 'localhost' }}"
+
+# ====================================
+# SSH Configuration
+# ====================================
+sap_vm_provision_ansible_ssh_common_args_base: >-
+  -o ConnectTimeout=180
+  -o ControlMaster=auto
+  -o ControlPersist=3600s
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ForwardX11=no
+  -o User={{ sap_vm_provision_kubevirt_vm_os_user }}
+
+# SSH common args for kubevirt_vm - conditionally includes ProxyJump based on bastion_execution
+# When bastion_execution: false -> uses base args only (direct connection)
+# When bastion_execution: true -> adds ProxyJump to route through bastion host
+#
+# Example configuration behavior:
+# ----------------------------------------
+# If sap_vm_provision_bastion_execution: false
+#   → sap_vm_provision_execution_host = 'localhost'
+#   → SSH args: base args only (no ProxyJump)
+#   → Connection: Ansible Control Node -> Target VMs (direct)
+#
+# If sap_vm_provision_bastion_execution: true
+#   → sap_vm_provision_execution_host = sap_vm_provision_bastion_public_ip
+#   → SSH args: base args + ProxyJump with optional IdentityFile for bastion key
+#   → Connection: Ansible Control Node -> Bastion -> Target VMs
+#
+# Note: The SSH args (StrictHostKeyChecking=no, UserKnownHostsFile=/dev/null, etc.)
+#       apply to both the direct connection and the bastion proxy connection.
+#       For ProxyJump, SSH will use default key locations (~/.ssh/id_rsa, SSH agent, etc.)
+#       To use a specific key for bastion, configure it via SSH config file or SSH agent.
+sap_vm_provision_ssh_common_args_kubevirt_default: >-
+  {{ sap_vm_provision_ansible_ssh_common_args_base }}
+  {% if sap_vm_provision_bastion_execution | default(false) | bool %}
+  -o ProxyJump={{ sap_vm_provision_bastion_user }}@{{ sap_vm_provision_bastion_public_ip }}
+  {% endif %}
+
+# ====================================
+# VM Configuration
+# ====================================
+  
+# Namespace where the VM should be created in
+sap_vm_provision_kubevirt_vm_target_namespace: <define a namespace for the VM>
 # Username to be created on guest
-sap_vm_provision_kubevirt_vm_os_user: cloud-user
+sap_vm_provision_kubevirt_vm_os_user: <define a username for the guest OS>
 
 # Password for the above user
-sap_vm_provision_kubevirt_vm_os_user_password: ""
+sap_vm_provision_kubevirt_vm_os_user_password: <define a password for sap_vm_provision_kubevirt_vm_os_user>
 
 # SSH key files, must be accessible on the ansible controller
 sap_vm_provision_ssh_host_private_key_file_path: /path/to/id_rsa
@@ -24,8 +165,7 @@ sap_vm_provision_ssh_host_public_key_file_path: /path/to/id_rsa.pub
 # RAM Overhead [GiB] for virt-launcher container, this can be small for VMs < 1 TB and without SRIOV but should be increased to 16 or more for VMs > 1TB
 sap_vm_provision_kubevirt_vm_container_memory_overhead: 1
 
-# hostname of the ansible controller
-sap_vm_provision_execution_host: localhost # on AAP, this is localhost
+
 
 # What's the host specification plan that should be rolled out?
 sap_vm_provision_host_specification_plan: example_host_specification_plan

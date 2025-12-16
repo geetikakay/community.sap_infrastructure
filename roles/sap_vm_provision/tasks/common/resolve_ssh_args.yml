@@ -1,0 +1,52 @@
+---
+# Reusable task to resolve SSH args with proper priority
+#
+# This task is called by each platform's execute_provision.yml before add_host
+# It resolves SSH arguments in the following priority order:
+#   1. ansible_ssh_common_args from inventory (per-host override)
+#   2. sap_vm_provision_host_ssh_args (user override variable)
+#   3. Platform defaults from vars/ssh_args_dict.yml based on bastion_execution
+#
+# Input variables (must be set before calling this task):
+#   - sap_vm_provision_platform: Platform identifier (e.g., 'kubevirt_vm', 'aws_ec2_vs')
+#   - sap_vm_provision_bastion_execution: Whether bastion is used (true/false)
+#   - inventory_hostname: Target host name
+#
+# Output variable:
+#   - __sap_vm_provision_resolved_ssh_args: Resolved SSH arguments string
+#
+# Usage in platform execute_provision.yml:
+#   - name: Resolve SSH args
+#     ansible.builtin.include_tasks:
+#       file: "{{ role_path }}/tasks/common/resolve_ssh_args.yml"
+
+- name: Load SSH args dictionary if not already loaded
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/vars/ssh_args_dict.yml"
+  when: sap_vm_provision_ssh_args_dict is not defined
+
+- name: Resolve SSH args for provisioned host with priority order
+  ansible.builtin.set_fact:
+    __sap_vm_provision_resolved_ssh_args: >-
+      {%- if hostvars[inventory_hostname]['ansible_ssh_common_args'] is defined 
+          and hostvars[inventory_hostname]['ansible_ssh_common_args'] | length > 0 -%}
+        {{ hostvars[inventory_hostname]['ansible_ssh_common_args'] }}
+      {%- elif sap_vm_provision_host_ssh_args is defined 
+          and sap_vm_provision_host_ssh_args | length > 0 -%}
+        {{ sap_vm_provision_host_ssh_args }}
+      {%- elif sap_vm_provision_bastion_execution | default(false) | bool -%}
+        {{ sap_vm_provision_ssh_args_dict[sap_vm_provision_platform]['host_with_bastion'] }}
+      {%- else -%}
+        {{ sap_vm_provision_ssh_args_dict[sap_vm_provision_platform]['host_without_bastion'] }}
+      {%- endif -%}
+
+- name: Debug - Display SSH args resolution details
+  ansible.builtin.debug:
+    msg:
+      - "=== SSH Args Resolution ==="
+      - "Host: {{ inventory_hostname }}"
+      - "Platform: {{ sap_vm_provision_platform }}"
+      - "Bastion execution: {{ sap_vm_provision_bastion_execution | default(false) }}"
+      - "Resolved SSH args: {{ __sap_vm_provision_resolved_ssh_args }}"
+      - "Source: {% if hostvars[inventory_hostname]['ansible_ssh_common_args'] is defined and hostvars[inventory_hostname]['ansible_ssh_common_args'] | length > 0 %}Inventory (ansible_ssh_common_args){% elif sap_vm_provision_host_ssh_args is defined and sap_vm_provision_host_ssh_args | length > 0 %}User Override (sap_vm_provision_host_ssh_args){% elif sap_vm_provision_bastion_execution | default(false) | bool %}Platform Default (with bastion){% else %}Platform Default (no bastion){% endif %}"
+  when: ansible_verbosity >= 2

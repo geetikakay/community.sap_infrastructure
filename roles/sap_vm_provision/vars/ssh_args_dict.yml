@@ -1,0 +1,71 @@
+---
+# SSH arguments configuration for sap_vm_provision role
+#
+# Three-tier priority system:
+#   1. Inventory (ansible_ssh_common_args in host_vars) - highest priority
+#   2. User override (sap_vm_provision_host_ssh_args) - second priority
+#   3. Platform defaults (this file) - lowest priority
+#
+# Structure: sap_vm_provision_ssh_args_dict[platform][scenario]
+#   - bastion: SSH args for connecting to bastion host itself
+#   - host_with_bastion: SSH args with ProxyJump through bastion
+#   - host_without_bastion: SSH args for direct connection to VMs
+#
+# Note: Bastion is an SSH jump host only - no libraries or tools required.
+#       All tasks run on the Ansible control node.
+#       See docs/SSH_CONFIGURATION.md for detailed documentation.
+# Base SSH configuration
+sap_vm_provision_ssh_args_base: >-
+  -o ConnectTimeout=180
+  -o ControlMaster=auto
+  -o ControlPersist=3600s
+  -o StrictHostKeyChecking=no
+  -o UserKnownHostsFile=/dev/null
+  -o ForwardX11=no
+
+# SSH configuration with bastion ProxyJump
+sap_vm_provision_ssh_args_with_bastion: >-
+  {{ sap_vm_provision_ssh_args_base }}
+  -o ProxyJump={{ sap_vm_provision_bastion_user }}@{{ sap_vm_provision_bastion_public_ip }}
+
+# Platform-specific SSH arguments dictionary
+sap_vm_provision_ssh_args_dict:
+  kubevirt_vm:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  aws_ec2_vs:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  ibmcloud_vs:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  ibmcloud_powervs:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  gcp_ce_vm:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  msazure_vm:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  ovirt_vm:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
+  
+  vmware_vm:
+    bastion: "{{ sap_vm_provision_ssh_args_base }}"
+    host_with_bastion: "{{ sap_vm_provision_ssh_args_with_bastion }}"
+    host_without_bastion: "{{ sap_vm_provision_ssh_args_base }}"
